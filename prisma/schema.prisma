@@ -1,6 +1,6 @@
 generator client {
   provider      = "prisma-client-js"
-  binaryTargets = ["native", "debian-openssl-3.0.x"]
+  binaryTargets = ["native", "rhel-openssl-1.0.x"]
 }
 
 datasource db {
@@ -809,7 +809,7 @@ model Approval {
   reviewedByName  String?   @map("reviewed_by_name")
   reviewedAt      DateTime? @map("reviewed_at")
   rejectionNote   String?   @map("rejection_note")
-  createdRecordId String?   @map("created_record_id")
+  createdRecordId BigInt?   @map("created_record_id")
 
   somiteeId BigInt  @map("somitee_id") @db.UnsignedBigInt
   somitee   Somitee @relation(fields: [somiteeId], references: [id], onDelete: Cascade)
@@ -829,6 +829,7 @@ model Approval {
 enum ApprovalType {
   collection
   expense
+  income
   bank
   member
 }

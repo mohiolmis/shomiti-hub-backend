@@ -4,10 +4,9 @@
   "description": "SomiteeHQ REST API backend built with NestJS, Prisma, MySQL, and Redis.",
   "private": true,
   "scripts": {
-    "start": "nest start",
+    "start": "node dist/main",
     "start:dev": "nest start --watch",
-    "start:prod": "NODE_ENV=production nest start",
-    "start:worker": "NODE_ENV=production nest start",
+    "start:prod": "NODE_ENV=production node dist/main",
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" --ignore-path .gitignore",
     "lint": "eslint \"src/**/*.ts\" --fix",

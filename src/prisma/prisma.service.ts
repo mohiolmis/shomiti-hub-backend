@@ -1,30 +1,32 @@
-import {INestApplication, Injectable, OnModuleInit} from '@nestjs/common';
+import {Injectable, OnModuleInit} from '@nestjs/common';
 import {PrismaClient} from '@prisma/client';
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit {
   async onModuleInit() {
     await this.waitForDb();
-    await this.$connect();
   }
 
-  private async waitForDb(retries = 10, delay = 3000) {
+  async waitForDb(retries = 10, delay = 3000) {
     for (let i = 0; i < retries; i++) {
       try {
-        await this.$queryRaw`SELECT 1`;
+        console.log('Trying DB connection...');
+
+        await this.$connect();
+
+        console.log('✅ Database connected successfully');
+
         return;
-      } catch (e) {
-        console.log(`⏳ DB not ready, retry ${i + 1}/${retries}`);
-        await new Promise((r) => setTimeout(r, delay));
+      } catch (error) {
+        console.error('❌ REAL DB ERROR =>');
+        console.error(error);
+
+        console.log(`⏳ DB retry ${i + 1}/${retries}`);
+
+        await new Promise((res) => setTimeout(res, delay));
       }
     }
 
     throw new Error('❌ Database not reachable after retries');
-  }
-
-  async enableShutdownHooks(app: INestApplication) {
-    process.on('beforeExit', async () => {
-      await app.close();
-    });
   }
 }

@@ -51,13 +51,13 @@ export class ApprovalsController {
 
   @Patch(':id/approve')
   @UseGuards(JwtAuthGuard)
-  @ApiOperation({summary: 'Approve approval'})
+  @ApiOperation({summary: 'Approve or Reject Approval'})
   async approveApproval(
     @Param('id') id: number,
     @Body() dto: ApproveRejectDto,
     @CurrentUser() user: any,
   ) {
-    const approval = await this.approvalsService.approveApproval(
+    const result = await this.approvalsService.approveApproval(
       Number(id),
       dto,
       user.id,
@@ -68,8 +68,11 @@ export class ApprovalsController {
     return {
       success: true,
       statusCode: 200,
-      message: 'Approved',
-      data: approval,
+      message:
+        dto.status === 'approved'
+          ? 'Approval Approved Successfully'
+          : 'Approval Rejected Successfully',
+      data: result,
     };
   }
 

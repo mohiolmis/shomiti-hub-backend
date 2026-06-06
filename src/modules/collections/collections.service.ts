@@ -122,18 +122,21 @@ export class CollectionsService {
       if (query.status) where.status = query.status;
       if (query.method) where.method = query.method;
       if (query.category) where.category = query.category;
+      if (query.financialYear) {
+        where.financialYear = query.financialYear;
+      }
 
       // memberId filter
       if (query.memberId) {
-        const memberReq = await this.prisma.memberRequest.findFirst({
+        const memberReq = await this.prisma.member.findFirst({
           where: {
-            memberRegNumber: BigInt(query.memberId),
+            id: BigInt(query.memberId),
             somiteeId: BigInt(somiteeId),
           },
         });
 
-        if (memberReq?.memberId) {
-          where.memberId = memberReq.memberId;
+        if (memberReq?.id) {
+          where.memberId = memberReq.id;
         } else {
           return {
             success: true,
@@ -673,9 +676,9 @@ export class CollectionsService {
 
       const expectedTotal = body.amount + lateFee - discount;
 
-      if (body.totalPaid !== undefined && Math.abs(body.totalPaid - expectedTotal) > 1) {
-        throw new BadRequestException('Invalid totalPaid calculation');
-      }
+      // if (body.totalPaid !== undefined && Math.abs(body.totalPaid - expectedTotal) > 1) {
+      //   throw new BadRequestException('Invalid totalPaid calculation');
+      // }
 
       // ======================
       // 3. TRANSACTION BLOCK
@@ -717,95 +720,35 @@ export class CollectionsService {
           });
         }
 
-        const amount = body.totalPaid ?? expectedTotal;
-
-        // ======================
-        // TRANSACTION TABLE
-        // ======================
-        const transaction = await tx.transaction.create({
+        // =========================
+        // 🔥 CREATE APPROVAL ONLY
+        // =========================
+        const approval = await this.prisma.approval.create({
           data: {
-            memberId: BigInt(memberId),
-            memberName: member.name || member.name || '',
             type: 'collection',
-            amount,
-            date: new Date(body.date),
+            title: `Collection from ${member.name}`,
+            amount: expectedTotal,
+            payload: {
+              paymentId: payment.id.toString(), // ✅ FIX: paymentId as string in payload for easier retrieval
+              memberId: body.memberId,
+              memberName: member.name,
+              amount: body.amount,
+              totalPaid: expectedTotal,
+              lateFee,
+              discount,
+              months,
+              financialYear: body.financialYear,
+              date: body.date,
+              method: body.method,
+              transactionId: body.transactionId,
+              note: body.note,
+            },
             status: 'pending',
-            method: body.method,
-            category: body.category ?? 'Monthly Fee',
-            transactionId: body.transactionId,
-            note: body.note,
-            somiteeId: BigInt(somiteeId),
             createdById: BigInt(userId),
+            createdByName: 'system',
+            somiteeId: BigInt(somiteeId),
           },
         });
-
-        // ======================
-        // LEDGER ENTRY (ACCOUNTING)
-        // ======================
-        await tx.ledgerEntry.create({
-          data: {
-            date: new Date(body.date),
-            description: `Collection from ${transaction.memberName}`,
-            type: 'credit',
-            credit: amount,
-            debit: 0,
-            balance: amount,
-            memberId: BigInt(memberId),
-            memberName: transaction.memberName,
-            referenceType: 'collection',
-            referenceId: payment.id.toString(),
-            somiteeId: BigInt(somiteeId),
-            createdById: BigInt(userId),
-          },
-        });
-
-        // ======================
-        // CASH BOOK ENTRY
-        // ======================
-        await tx.cashBookEntry.create({
-          data: {
-            date: new Date(body.date),
-            description: `Collection from ${transaction.memberName}`,
-            cashIn: amount,
-            cashOut: 0,
-            balance: amount,
-            referenceType: 'collection',
-            referenceId: payment.id.toString(),
-            somiteeId: BigInt(somiteeId),
-            createdById: BigInt(userId),
-          },
-        });
-
-        // ======================
-        // BANK TRANSACTION (OPTIONAL)
-        // ======================
-        if (digitalMethods.includes(body.method)) {
-          const bankAccount = await tx.bankAccount.findFirst({
-            where: {somiteeId: BigInt(somiteeId)},
-          });
-
-          if (bankAccount) {
-            await tx.bankTransaction.create({
-              data: {
-                bankAccountId: bankAccount.id,
-                type: 'credit',
-                amount,
-                date: new Date(body.date),
-                note: body.note,
-                balanceAfter: bankAccount.balance + amount,
-                somiteeId: BigInt(somiteeId),
-                createdById: BigInt(userId),
-              },
-            });
-
-            await tx.bankAccount.update({
-              where: {id: bankAccount.id},
-              data: {
-                balance: {increment: amount},
-              },
-            });
-          }
-        }
 
         // ======================
         // RESPONSE
@@ -814,13 +757,13 @@ export class CollectionsService {
           success: true,
           message: 'Collection recorded successfully',
           data: {
-            id: transaction.id,
+            id: payment.id,
             memberId,
-            memberName: transaction.memberName,
-            amount,
+            memberName: member.name || member.name || '',
+            amount: body.amount,
             lateFee,
             discount,
-            totalPaid: amount,
+            totalPaid: body.amount + lateFee - discount,
             financialYear: body.financialYear,
             months,
             date: body.date,

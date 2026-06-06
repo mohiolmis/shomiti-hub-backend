@@ -104,51 +104,77 @@ export class ExpensesService {
           },
         });
 
-        await tx.transaction.create({
+        // 2. CREATE APPROVAL
+        const approval = await tx.approval.create({
           data: {
-            memberId: null,
-            memberName: null,
             type: 'expense',
+            title: `Expense - ${body.category}`,
             amount: body.amount,
-            date: new Date(body.date),
-            status: 'approved',
-            method: body.method,
-            category: body.category,
-            transactionId: `EXP-${expense.id}`,
-            note: body.note,
+            description: body.note,
+
+            payload: {
+              expenseId: expense.id.toString(),
+
+              amount: body.amount,
+              date: body.date,
+              category: body.category,
+              method: body.method,
+              note: body.note,
+              receiptUrl: body.receiptUrl,
+            },
+
+            status: 'pending',
             somiteeId,
             createdById: userId,
+            createdByName: 'System',
           },
         });
 
-        await tx.ledgerEntry.create({
-          data: {
-            date: new Date(body.date),
-            description: `Expense: ${body.category}`,
-            type: 'expense',
-            debit: body.amount,
-            credit: 0,
-            balance: 0,
-            referenceType: 'expense',
-            referenceId: expense.id.toString(),
-            somiteeId,
-            createdById: userId,
-          },
-        });
+        // await tx.transaction.create({
+        //   data: {
+        //     memberId: null,
+        //     memberName: null,
+        //     type: 'expense',
+        //     amount: body.amount,
+        //     date: new Date(body.date),
+        //     status: 'approved',
+        //     method: body.method,
+        //     category: body.category,
+        //     transactionId: `EXP-${expense.id}`,
+        //     note: body.note,
+        //     somiteeId,
+        //     createdById: userId,
+        //   },
+        // });
 
-        await tx.cashBookEntry.create({
-          data: {
-            date: new Date(body.date),
-            description: `Expense: ${body.category}`,
-            cashIn: 0,
-            cashOut: body.amount,
-            balance: 0,
-            referenceType: 'expense',
-            referenceId: expense.id.toString(),
-            somiteeId,
-            createdById: userId,
-          },
-        });
+        // await tx.ledgerEntry.create({
+        //   data: {
+        //     date: new Date(body.date),
+        //     description: `Expense: ${body.category}`,
+        //     type: 'expense',
+        //     debit: body.amount,
+        //     credit: 0,
+        //     balance: 0,
+        //     referenceType: 'expense',
+        //     referenceId: expense.id.toString(),
+        //     somiteeId,
+        //     createdById: userId,
+        //   },
+        // });
+
+        // await tx.cashBookEntry.create({
+        //   data: {
+        //     date: new Date(body.date),
+        //     description: `Expense: ${body.category}`,
+        //     cashIn: 0,
+        //     cashOut: body.amount,
+        //     balance: 0,
+        //     referenceType: 'expense',
+        //     referenceId: expense.id.toString(),
+        //     somiteeId,
+        //     createdById: userId,
+        //   },
+        // });
 
         return {
           success: true,

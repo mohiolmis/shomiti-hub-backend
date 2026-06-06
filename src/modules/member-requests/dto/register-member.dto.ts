@@ -138,4 +138,39 @@ export class RegisterMemberDto {
     format: 'binary',
   })
   signature?: any;
+
+  @ApiPropertyOptional({
+    example: 'North Para',
+  })
+  @IsOptional()
+  @IsString()
+  village?: string;
+
+  @ApiPropertyOptional({
+    example: '05',
+  })
+  @IsOptional()
+  @IsString()
+  wardNo?: string;
+
+  @ApiPropertyOptional({
+    example: 'Kaliganj Union',
+  })
+  @IsOptional()
+  @IsString()
+  union?: string;
+
+  @ApiPropertyOptional({
+    example: 'Kaliganj',
+  })
+  @IsOptional()
+  @IsString()
+  upazila?: string;
+
+  @ApiPropertyOptional({
+    example: 'Gazipur',
+  })
+  @IsOptional()
+  @IsString()
+  district?: string;
 }

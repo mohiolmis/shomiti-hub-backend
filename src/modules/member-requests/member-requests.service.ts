@@ -10,7 +10,7 @@ import {Express} from 'express';
 import * as multer from 'multer';
 import * as fs from 'fs';
 import * as path from 'path';
-import {ApproveMemberRequestDto} from './dto/approve-member-request.dto';
+import {ApproveMemberDto, ApproveMemberRequestDto} from './dto/approve-member-request.dto';
 import {RejectMemberRequestDto} from './dto/reject-member-request.dto';
 
 type UploadFilesType = {
@@ -431,7 +431,7 @@ export class MemberRequestsService {
     });
   }
 
-  async approve(id: number, userId: number, somiteeId: number) {
+  async approve(id: number, userId: number, somiteeId: number, body: ApproveMemberDto) {
     try {
       const requestId = Number(id);
 
@@ -459,12 +459,6 @@ export class MemberRequestsService {
             throw new BadRequestException('Already approved');
           }
 
-          // const feeAmount = request.monthlyFee;
-          const monthlyFee = request.monthlyFee ?? 0;
-          const registrationFee = request.registrationFee ?? monthlyFee;
-
-          const feeAmount = registrationFee;
-
           const now = new Date();
 
           // =========================
@@ -476,8 +470,8 @@ export class MemberRequestsService {
               shopName: request.shopName,
               phone: request.mobile,
 
-              monthlyFee: request.monthlyFee ?? 0,
-              billingCycle: request.billingCycle,
+              monthlyFee: body?.monthlyFee ?? request.monthlyFee ?? 0,
+              billingCycle: body?.billingCycle ?? request.billingCycle,
 
               somiteeId: request.somiteeId,
               createdById: BigInt(userId),
@@ -487,123 +481,6 @@ export class MemberRequestsService {
                 .join(', '),
             },
           });
-
-          console.log('member created:', member.id);
-
-          // =========================
-          // 3. TRANSACTION
-          // =========================
-          await tx.transaction.create({
-            data: {
-              memberId: member.id,
-              memberName: member.name,
-
-              type: 'credit',
-              category: 'member_joining_fee',
-
-              amount: feeAmount,
-
-              date: now,
-              method: 'system',
-              status: 'approved',
-
-              somiteeId: BigInt(somiteeId),
-              createdById: BigInt(userId),
-            },
-          });
-
-          console.log('transaction created');
-
-          // =========================
-          // 4. LEDGER
-          // =========================
-          await tx.ledgerEntry.create({
-            data: {
-              date: now,
-
-              description: `Member joining fee - ${member.name}`,
-
-              type: 'credit',
-              credit: feeAmount,
-              balance: feeAmount,
-
-              memberId: member.id,
-              memberName: member.name,
-
-              referenceType: 'member',
-              referenceId: member.id.toString(),
-
-              somiteeId: BigInt(somiteeId),
-              createdById: BigInt(userId),
-            },
-          });
-
-          console.log('ledger created');
-
-          // =========================
-          // 5. CASHBOOK
-          // =========================
-          await tx.cashBookEntry.create({
-            data: {
-              date: now,
-
-              description: `Member joining fee - ${member.name}`,
-
-              cashIn: feeAmount,
-              cashOut: 0,
-              balance: feeAmount,
-
-              referenceType: 'member',
-              referenceId: member.id.toString(),
-
-              somiteeId: BigInt(somiteeId),
-              createdById: BigInt(userId),
-            },
-          });
-
-          console.log('cashbook created');
-
-          // =========================
-          // 6. STATS
-          // =========================
-          const startOfDay = new Date(now);
-          startOfDay.setHours(0, 0, 0, 0);
-
-          const existingStats = await tx.statsSummary.findFirst({
-            where: {
-              somiteeId: BigInt(somiteeId),
-              periodType: 'daily',
-              date: startOfDay,
-            },
-          });
-
-          if (existingStats) {
-            await tx.statsSummary.update({
-              where: {
-                id: existingStats.id,
-              },
-              data: {
-                totalCollection: {
-                  increment: feeAmount,
-                },
-              },
-            });
-          } else {
-            await tx.statsSummary.create({
-              data: {
-                date: startOfDay,
-
-                totalCollection: feeAmount,
-                totalExpense: 0,
-                totalDue: 0,
-
-                periodType: 'daily',
-
-                somiteeId: BigInt(somiteeId),
-                createdById: BigInt(userId),
-              },
-            });
-          }
 
           console.log('stats updated');
 

@@ -1,5 +1,5 @@
 import {ApiProperty, ApiPropertyOptional} from '@nestjs/swagger';
-import {IsOptional, IsString} from 'class-validator';
+import {IsEnum, IsOptional, IsString} from 'class-validator';
 
 export enum ApprovalAction {
   approved = 'approved',
@@ -8,11 +8,12 @@ export enum ApprovalAction {
 
 export class ApproveRejectDto {
   @ApiProperty({
-    example: 'approved',
     enum: ApprovalAction,
-    description: 'Approval status (approved or rejected)',
+    example: ApprovalAction.approved,
+    description: 'Approval status',
   })
-  status!: ApprovalAction;
+  @IsEnum(ApprovalAction)
+  status: ApprovalAction = ApprovalAction.approved;
 
   @ApiPropertyOptional({
     example: 'Verified and approved by admin',

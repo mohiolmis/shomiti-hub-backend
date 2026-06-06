@@ -9,6 +9,7 @@ import {PrismaService} from '../../prisma/prisma.service';
 import {ApprovalType, GetApprovalsDto} from './dto/get-appovals.dto';
 import {ApproveRejectDto} from './dto/approve-reject.dto';
 import {CreateApprovalDto} from './dto/create-approval.dto';
+import {Prisma} from '@prisma/client';
 
 @Injectable()
 export class ApprovalsService {
@@ -270,72 +271,385 @@ export class ApprovalsService {
     reviewerName: string,
     somiteeId: number,
   ) {
+    const approval = await this.prisma.approval.findFirst({
+      where: {
+        id: BigInt(id),
+        somiteeId: BigInt(somiteeId),
+      },
+    });
+
+    console.log('approvals.service.dto:', dto);
+
+    if (!approval) {
+      throw new NotFoundException('Approval not found');
+    }
+
+    if (approval.status !== 'pending') {
+      throw new BadRequestException(`Already ${approval.status}`);
+    }
+
+    const permissionMap: Record<string, string> = {
+      collection: 'collection.approve',
+      expense: 'expense.approve',
+      bank: 'bank.approve',
+      member: 'member.approve',
+      income: 'income.approve',
+    };
+
+    const permission = permissionMap[approval.type];
+
+    const hasPermission = await this.checkUserPermission(reviewerId, permission);
+
+    if (!hasPermission) {
+      throw new ForbiddenException(`Missing permission: ${permission}`);
+    }
+
+    if (dto.status === 'approved') {
+      if (approval.type === 'expense') {
+        return this.processExpenseApproval(approval, reviewerId);
+      } else if (approval.type === 'collection') {
+        return this.processApproval(approval, reviewerId, reviewerName, dto.note);
+      } else if (approval.type === 'income') {
+        return this.processIncomeApproval(approval, reviewerId, reviewerName, dto.note);
+      }
+    }
+
+    return this.processReject(approval, reviewerId, reviewerName, dto.note);
+  }
+
+  private async processApproval(
+    approval: any,
+    reviewerId: number,
+    reviewerName: string,
+    note?: string,
+  ) {
     try {
-      const approval = await this.prisma.approval.findFirst({
-        where: {
-          id: BigInt(id),
-          somiteeId: BigInt(somiteeId),
-        },
+      return await this.prisma.$transaction(async (tx) => {
+        // 1. FIND EXISTING PAYMENT
+        const payment = await tx.payment.findFirst({
+          where: {
+            id: approval.payload.paymentId, // IMPORTANT
+          },
+        });
+
+        if (!payment) {
+          throw new NotFoundException('Payment not found for approval');
+        }
+
+        // 2. UPDATE PAYMENT STATUS
+        const updatedPayment = await tx.payment.update({
+          where: {id: payment.id},
+          data: {
+            status: 'approved',
+          },
+        });
+
+        // 3. CREATE TRANSACTION
+        const transaction = await this.createTransaction(tx, approval, payment);
+
+        // 4. LEDGER
+        await this.createLedger(tx, approval, transaction.id);
+
+        // 5. CASHBOOK
+        await this.createCashbook(tx, approval, transaction.id);
+
+        // 6. BANK TRANSACTION
+        await this.createBankTransaction(tx, approval, transaction.id);
+
+        // 7. UPDATE APPROVAL
+        const updatedApproval = await tx.approval.update({
+          where: {
+            id: approval.id,
+          },
+          data: {
+            status: 'approved',
+            rejectionNote: note, // ✅ FIXED
+            reviewedById: BigInt(reviewerId),
+            reviewedByName: reviewerName,
+            reviewedAt: new Date(),
+          },
+        });
+
+        return updatedApproval;
       });
-
-      if (!approval) {
-        throw new NotFoundException('Approval not found');
-      }
-
-      if (approval.status !== 'pending') {
-        throw new BadRequestException('Approval is not in pending status');
-      }
-
-      // Permission map
-      const permissionMap: Record<string, string> = {
-        collection: 'collection.approve',
-        expense: 'expense.approve',
-        bank: 'bank.approve',
-        member: 'member.approve',
-      };
-
-      const requiredPermission = permissionMap[approval.type];
-
-      if (!requiredPermission) {
-        throw new BadRequestException('Invalid approval type');
-      }
-
-      const hasPermission = await this.checkUserPermission(reviewerId, requiredPermission);
-
-      if (!hasPermission) {
-        throw new ForbiddenException(`Missing permission: ${requiredPermission}`);
-      }
-
-      // Create record first (safer flow)
-      const createdRecordId = await this.createRecordFromApproval(approval);
-
-      const updatedApproval = await this.prisma.approval.update({
-        where: {id: BigInt(id)},
-        data: {
-          status: 'approved',
-          reviewedById: BigInt(reviewerId),
-          reviewedByName: reviewerName ?? 'Unknown',
-          reviewedAt: new Date(),
-          createdRecordId: createdRecordId ?? null,
-        },
-      });
-
-      return updatedApproval;
-    } catch (error: unknown) {
-      console.error('approvals.approveApproval error:', error);
-
-      if (
-        error instanceof NotFoundException ||
-        error instanceof BadRequestException ||
-        error instanceof ForbiddenException
-      ) {
-        throw error;
-      }
-
-      throw new InternalServerErrorException('Failed to approveApproval');
+    } catch (error) {
+      console.error('processApproval error =>', error);
+      throw error;
     }
   }
 
+  private async createCashbook(tx: Prisma.TransactionClient, approval: any, transactionId: bigint) {
+    return tx.cashBookEntry.create({
+      data: {
+        somiteeId: approval.somiteeId,
+        date: new Date(),
+        description: 'Collection Approved',
+        cashIn: approval.amount,
+        cashOut: 0,
+        balance: 0,
+        referenceType: 'transaction',
+        referenceId: String(transactionId),
+        createdById: approval.createdById,
+      },
+    });
+  }
+
+  private async createTransaction(tx: Prisma.TransactionClient, approval: any, payment: any) {
+    return tx.transaction.create({
+      data: {
+        somitee: {
+          connect: {id: approval.somiteeId},
+        },
+
+        member: approval.payload?.memberId
+          ? {
+              connect: {id: approval.payload.memberId},
+            }
+          : undefined,
+
+        memberName: approval.payload?.memberName ?? null,
+
+        type: 'collection',
+        amount: approval.amount,
+        date: new Date(),
+        status: 'approved',
+        method: approval.payload?.method ?? 'cash',
+
+        createdBy: {
+          connect: {id: approval.createdById},
+        },
+      },
+    });
+  }
+
+  private async createLedger(tx: Prisma.TransactionClient, approval: any, transactionId: bigint) {
+    return tx.ledgerEntry.create({
+      data: {
+        somiteeId: approval.somiteeId,
+        referenceType: 'transaction',
+        referenceId: String(transactionId),
+        description: 'Collection Approved',
+        type: 'collection',
+        debit: approval.amount,
+        credit: 0,
+        balance: 0,
+        date: new Date(),
+        createdById: approval.createdById,
+      },
+    });
+  }
+  private async createBankTransaction(
+    tx: Prisma.TransactionClient,
+    approval: any,
+    transactionId: bigint,
+  ) {
+    if (!approval.payload?.bankAccountId) return;
+
+    return tx.bankTransaction.create({
+      data: {
+        bankAccountId: approval.payload.bankAccountId,
+        type: 'deposit',
+        amount: approval.amount,
+        date: new Date(),
+        note: 'Approved collection',
+        reference: String(transactionId),
+        balanceAfter: 0,
+        somiteeId: approval.somiteeId,
+        createdById: approval.createdById,
+      },
+    });
+  }
+
+  async processExpenseApproval(approval: any, reviewerId: number) {
+    return this.prisma.$transaction(async (tx) => {
+      const {expenseId} = approval.payload;
+
+      // 1. UPDATE EXPENSE
+      const expense = await tx.expense.update({
+        where: {id: BigInt(expenseId)},
+        data: {
+          status: 'approved',
+        },
+      });
+
+      // 2. CREATE TRANSACTION
+      await tx.transaction.create({
+        data: {
+          type: 'expense',
+          amount: expense.amount,
+          date: expense.date,
+          status: 'approved',
+          method: expense.method,
+          category: expense.category,
+          transactionId: `EXP-${expense.id}`,
+          note: expense.note,
+          somiteeId: expense.somiteeId,
+          createdById: reviewerId,
+        },
+      });
+
+      // 3. LEDGER POSTING
+      await tx.ledgerEntry.create({
+        data: {
+          date: expense.date,
+          description: `Expense: ${expense.category}`,
+          type: 'expense',
+          debit: expense.amount,
+          credit: 0,
+          balance: 0,
+          referenceType: 'expense',
+          referenceId: expense.id.toString(),
+          somiteeId: expense.somiteeId,
+          createdById: reviewerId,
+        },
+      });
+
+      // 4. CASHBOOK POSTING
+      await tx.cashBookEntry.create({
+        data: {
+          date: expense.date,
+          description: `Expense: ${expense.category}`,
+          cashIn: 0,
+          cashOut: expense.amount,
+          balance: 0,
+          referenceType: 'expense',
+          referenceId: expense.id.toString(),
+          somiteeId: expense.somiteeId,
+          createdById: reviewerId,
+        },
+      });
+
+      // 5. UPDATE APPROVAL
+      await tx.approval.update({
+        where: {id: approval.id},
+        data: {
+          status: 'approved',
+          reviewedById: BigInt(reviewerId),
+          reviewedAt: new Date(),
+        },
+      });
+
+      return {
+        success: true,
+        message: 'Expense approved & posted successfully',
+      };
+    });
+  }
+
+  async processIncomeApproval(
+    approval: any,
+    reviewerId: number,
+    reviewerName: string,
+    note?: string,
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      const {incomeId} = approval.payload;
+
+      // 1. UPDATE INCOME
+      const income = await tx.income.update({
+        where: {id: BigInt(incomeId)},
+        data: {
+          status: 'received',
+        },
+      });
+
+      // 2. TRANSACTION ENTRY
+      const transaction = await tx.transaction.create({
+        data: {
+          type: 'income',
+          amount: income.amount,
+          date: income.incomeDate,
+          status: 'approved',
+          method: 'cash',
+          category: income.type,
+          transactionId: `INC-${income.id}`,
+          note: income.note,
+          somiteeId: income.somiteeId,
+          createdById: reviewerId,
+        },
+      });
+
+      // 3. LEDGER (CREDIT ENTRY)
+      await tx.ledgerEntry.create({
+        data: {
+          somiteeId: income.somiteeId,
+          referenceType: 'transaction',
+          referenceId: transaction.id.toString(),
+          description: `Income: ${income.title}`,
+          type: 'income',
+          debit: 0,
+          credit: income.amount,
+          balance: 0,
+          date: new Date(),
+          createdById: reviewerId,
+        },
+      });
+
+      // 4. CASHBOOK (CASH IN)
+      await tx.cashBookEntry.create({
+        data: {
+          somiteeId: income.somiteeId,
+          date: new Date(),
+          description: `Income: ${income.title}`,
+          cashIn: income.amount,
+          cashOut: 0,
+          balance: 0,
+          referenceType: 'transaction',
+          referenceId: transaction.id.toString(),
+          createdById: reviewerId,
+        },
+      });
+
+      // 5. BANK TRANSACTION (optional)
+      if (income.bankAccountId) {
+        await tx.bankTransaction.create({
+          data: {
+            bankAccountId: income.bankAccountId,
+            type: 'deposit',
+            amount: income.amount,
+            date: new Date(),
+            note: 'Approved income',
+            reference: transaction.id.toString(),
+            balanceAfter: 0,
+            somiteeId: income.somiteeId,
+            createdById: reviewerId,
+          },
+        });
+      }
+
+      // 6. APPROVAL UPDATE
+      return tx.approval.update({
+        where: {id: approval.id},
+        data: {
+          status: 'approved',
+          rejectionNote: note,
+          reviewedById: BigInt(reviewerId),
+          reviewedByName: reviewerName,
+          reviewedAt: new Date(),
+        },
+      });
+    });
+  }
+
+  private async processReject(
+    approval: any,
+    reviewerId: number,
+    reviewerName: string,
+    note?: string,
+  ) {
+    return this.prisma.approval.update({
+      where: {
+        id: approval.id,
+      },
+      data: {
+        status: 'rejected',
+        rejectionNote: note,
+        reviewedById: BigInt(reviewerId),
+        reviewedByName: reviewerName,
+        reviewedAt: new Date(),
+      },
+    });
+  }
   async rejectApproval(
     id: number,
     dto: ApproveRejectDto,

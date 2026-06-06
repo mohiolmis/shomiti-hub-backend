@@ -28,7 +28,7 @@ import {Express} from 'express';
 import * as multer from 'multer';
 import {memoryStorage} from 'multer';
 import {ListMemberQueryDto} from './dto/list-member-query.dto';
-import {ApproveMemberRequestDto} from './dto/approve-member-request.dto';
+import {ApproveMemberDto, ApproveMemberRequestDto} from './dto/approve-member-request.dto';
 import {RejectMemberRequestDto} from './dto/reject-member-request.dto';
 
 @ApiTags('Member Requests')
@@ -250,10 +250,11 @@ export class MemberRequestsController {
   @ApiOperation({summary: 'Approve member request'})
   async approve(
     @Param('id') id: string,
+    @Body() body: ApproveMemberDto,
     @CurrentUser('id') userId: number,
     @CurrentUser('somiteeId') somiteeId: number,
   ) {
-    return this.service.approve(Number(id), userId, somiteeId);
+    return this.service.approve(Number(id), userId, somiteeId, body);
   }
 
   // ====================== REJECT MEMBER REQUEST ======================
