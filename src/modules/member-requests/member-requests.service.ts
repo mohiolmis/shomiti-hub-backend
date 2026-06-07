@@ -461,6 +461,7 @@ export class MemberRequestsService {
 
           const now = new Date();
 
+          console.log('request found, creating member...', body);
           // =========================
           // 2. CREATE MEMBER
           // =========================
@@ -470,8 +471,8 @@ export class MemberRequestsService {
               shopName: request.shopName,
               phone: request.mobile,
 
-              monthlyFee: body?.monthlyFee ?? request.monthlyFee ?? 0,
-              billingCycle: body?.billingCycle ?? request.billingCycle,
+              monthlyFee: body?.monthlyFee ?? body.monthlyFee ?? 0,
+              billingCycle: body?.billingCycle ?? body.billingCycle ?? request.billingCycle,
 
               somiteeId: request.somiteeId,
               createdById: BigInt(userId),
@@ -496,6 +497,8 @@ export class MemberRequestsService {
               approvedAt: now,
               approvedBy: BigInt(userId),
               memberId: member.id,
+              monthlyFee: body?.monthlyFee ?? body.monthlyFee ?? 0,
+              billingCycle: body?.billingCycle ?? body.billingCycle ?? request.billingCycle,
             },
           });
 
